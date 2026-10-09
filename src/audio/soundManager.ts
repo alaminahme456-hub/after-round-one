@@ -11,6 +11,8 @@
 class SoundManager {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private roundAudio: HTMLAudioElement | null = null;
+  private roundAudioPaused = false;
   soundEnabled = true;
   musicEnabled = true;
   masterVolume = 0.8;
@@ -34,10 +36,12 @@ class SoundManager {
 
   setSoundEnabled(on: boolean): void {
     this.soundEnabled = on;
+    if (!on) this.stopRoundCountdownAudio();
   }
   setMasterVolume(v: number): void {
     this.masterVolume = Math.max(0, Math.min(1, v));
     if (this.masterGain) this.masterGain.gain.value = this.masterVolume;
+    if (this.roundAudio) this.roundAudio.volume = this.masterVolume;
   }
 
   private play(
@@ -74,8 +78,35 @@ class SoundManager {
   }
 
   rollingLoop(): void {
-    // Subtle low rumble — played once at rolling start.
-    this.play(80, 0.6, "triangle", 0.15);
+    // Play the supplied countdown sound for the duration of the round timer.
+    if (!this.soundEnabled || typeof window === "undefined") return;
+    if (!this.roundAudio) {
+      this.roundAudio = new Audio("/audio/after-round-one.mp3");
+      this.roundAudio.preload = "auto";
+      this.roundAudio.loop = true;
+      this.roundAudio.volume = this.masterVolume;
+    }
+    this.roundAudioPaused = false;
+    this.roundAudio.play().catch(() => {});
+  }
+
+  stopRoundCountdownAudio(): void {
+    if (!this.roundAudio) return;
+    this.roundAudio.pause();
+    this.roundAudio.currentTime = 0;
+    this.roundAudioPaused = false;
+  }
+
+  pauseRoundCountdownAudio(): void {
+    if (!this.roundAudio || this.roundAudio.paused) return;
+    this.roundAudio.pause();
+    this.roundAudioPaused = true;
+  }
+
+  resumeRoundCountdownAudio(): void {
+    if (!this.soundEnabled || !this.roundAudio || !this.roundAudioPaused) return;
+    this.roundAudioPaused = false;
+    this.roundAudio.play().catch(() => {});
   }
 
   countdownTick(tier: "calm" | "warn" | "urgent" | "final"): void {
@@ -84,6 +115,7 @@ class SoundManager {
   }
 
   timerStop(): void {
+    this.stopRoundCountdownAudio();
     this.play(660, 0.08, "square", 0.3);
     setTimeout(() => this.play(330, 0.18, "sawtooth", 0.25, 220), 80);
   }
