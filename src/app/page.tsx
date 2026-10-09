@@ -42,6 +42,10 @@ export default function Home() {
   const state = snapshot?.state ?? "MENU";
 
   // Helpers to actually drive the FSM transitions.
+  const goSinglePlayerAi = () => {
+    const m = initMatch({ mode: "ai" });
+    m.startSinglePlayerAi("You", "AI Computer", { mode: "ai" });
+  };
   const goLocalLobby = () => {
     const m = initMatch({ mode: "local" });
     m.enterLobby(["Player 1", "Player 2"], { mode: "local" });
@@ -64,7 +68,7 @@ export default function Home() {
           <MainMenu
             onPlay={() => {
               sound.click();
-              goLocalLobby();
+              goSinglePlayerAi();
             }}
             onCreateRoom={() => {
               sound.click();

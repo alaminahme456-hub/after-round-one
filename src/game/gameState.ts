@@ -64,6 +64,8 @@ export interface MatchSnapshot {
   rankings: PlayerState[] | null;
   /** Optional info message for the UI. */
   message: string | null;
+  /** Whether the match is currently paused. */
+  isPaused: boolean;
 }
 
 type Listener = (snapshot: MatchSnapshot) => void;
@@ -71,6 +73,7 @@ type Listener = (snapshot: MatchSnapshot) => void;
 export class Match {
   private snapshot: MatchSnapshot;
   private listeners = new Set<Listener>();
+  private pausedAt: number | null = null;
 
   constructor(config?: Partial<MatchConfig>) {
     this.snapshot = {
@@ -85,6 +88,7 @@ export class Match {
       roundStartTime: null,
       rankings: null,
       message: null,
+      isPaused: false,
     };
   }
 
@@ -138,7 +142,53 @@ export class Match {
       roundStartTime: null,
       rankings: null,
       message: `${playerNames.length} players joined`,
+      isPaused: false,
     });
+  }
+
+  /** Pause the active round timer and freeze game flow. */
+  pause(now: number = Date.now()): boolean {
+    if (this.snapshot.isPaused) return false;
+    this.pausedAt = now;
+    this.commit({ isPaused: true });
+    return true;
+  }
+
+  /** Resume the active round timer, offsetting phase times by the pause duration. */
+  resume(now: number = Date.now()): boolean {
+    if (!this.snapshot.isPaused) return false;
+    const pauseDuration = this.pausedAt ? Math.max(0, now - this.pausedAt) : 0;
+    this.pausedAt = null;
+
+    let roundStartTime = this.snapshot.roundStartTime;
+    if (roundStartTime !== null && pauseDuration > 0) {
+      roundStartTime += pauseDuration;
+    }
+
+    let submission = this.snapshot.submission;
+    if (submission && pauseDuration > 0) {
+      submission = {
+        ...submission,
+        openedAt: submission.openedAt + pauseDuration,
+        closesAt: submission.closesAt + pauseDuration,
+      };
+    }
+
+    this.commit({
+      isPaused: false,
+      roundStartTime,
+      submission,
+    });
+    return true;
+  }
+
+  /** Toggle the pause state. */
+  togglePause(now: number = Date.now()): boolean {
+    if (this.snapshot.isPaused) {
+      return this.resume(now);
+    } else {
+      return this.pause(now);
+    }
   }
 
   setConfig(partial: Partial<MatchConfig>): void {
@@ -153,20 +203,115 @@ export class Match {
     });
   }
 
+  setPlayerSkinTone(id: number, skinTone: SkinTone): void {
+    this.commit({
+      players: this.snapshot.players.map((p) =>
+        p.id === id ? { ...p, skinTone } : p,
+      ),
+    });
+  }
+
   /** Transition into starting-number selection. */
   startStartingNumberSelection(): void {
     if (this.snapshot.state !== "LOBBY") return;
     this.commit({ state: "STARTING_NUMBER_SELECTION", message: "Pick your starting number" });
   }
 
-  /** A player picks their starting number. */
+  /** Start a single-player game mode against the AI computer. */
+  startSinglePlayerAi(
+    playerName = "You",
+    aiName = "AI Computer",
+    config?: Partial<MatchConfig>,
+  ): void {
+    const cfg: MatchConfig = {
+      ...this.snapshot.config,
+      ...config,
+      mode: "ai",
+      playerCount: 2,
+    };
+    const players: PlayerState[] = [
+      {
+        id: 1,
+        name: playerName,
+        startingNumber: null,
+        submittedNumber: null,
+        isSpectator: false,
+        finishingPosition: null,
+        skinTone: 0,
+        connected: true,
+        ready: false,
+        isAi: false,
+      },
+      {
+        id: 2,
+        name: aiName,
+        startingNumber: null,
+        submittedNumber: null,
+        isSpectator: false,
+        finishingPosition: null,
+        skinTone: 2,
+        connected: true,
+        ready: true,
+        isAi: true,
+      },
+    ];
+    this.commit({
+      state: "STARTING_NUMBER_SELECTION",
+      config: cfg,
+      players,
+      roundNumber: 0,
+      lastOutcome: null,
+      submission: null,
+      roundStartTime: null,
+      rankings: null,
+      message: "Pick your unique starting number against AI Computer",
+      isPaused: false,
+    });
+  }
+
+  /** A player picks their starting number. Enforces uniqueness among players. */
   setStartingNumber(playerId: number, n: StartingNumber): boolean {
     if (this.snapshot.state !== "STARTING_NUMBER_SELECTION") return false;
     const max = startingNumberMax(this.snapshot.config.playerCount);
     if (n < 1 || n > max) return false;
-    const players = this.snapshot.players.map((p) =>
-      p.id === playerId ? { ...p, startingNumber: n } : p,
+
+    // Enforce uniqueness: if number is selected by any other player, reject selection
+    const isTaken = this.snapshot.players.some(
+      (p) => p.id !== playerId && p.startingNumber === n,
     );
+    if (isTaken) return false;
+
+    let players = this.snapshot.players.map((p) =>
+      p.id === playerId ? { ...p, startingNumber: n, ready: true } : p,
+    );
+
+    // If there is an AI player in the match, automatically pick a distinct unique number for the AI
+    const aiPlayer = players.find((p) => p.isAi && !p.isSpectator);
+    if (aiPlayer) {
+      const takenByOthers = new Set(
+        players
+          .filter((p) => p.id !== aiPlayer.id && p.startingNumber !== null)
+          .map((p) => p.startingNumber!),
+      );
+
+      // If AI has no number yet or its number collides with the chosen number
+      if (aiPlayer.startingNumber === null || takenByOthers.has(aiPlayer.startingNumber)) {
+        const available: number[] = [];
+        for (let k = 1; k <= max; k++) {
+          if (!takenByOthers.has(k)) available.push(k);
+        }
+        if (available.length > 0) {
+          // AI tactically picks a balanced unique number
+          const midTarget = Math.round(max * 0.55);
+          available.sort((a, b) => Math.abs(a - midTarget) - Math.abs(b - midTarget));
+          const aiNum = available[0];
+          players = players.map((p) =>
+            p.id === aiPlayer.id ? { ...p, startingNumber: aiNum, ready: true } : p,
+          );
+        }
+      }
+    }
+
     this.commit({ players, message: null });
     return true;
   }

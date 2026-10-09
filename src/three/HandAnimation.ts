@@ -1,41 +1,74 @@
 /**
- * HandAnimation.ts — drives the rapid left-to-right hand-rolling motion.
+ * HandAnimation.ts — drives the rapid left-to-right hand-rolling motion with smooth Bezier easing.
  *
  * Behaviour:
- *   - When `rolling = true`, hands oscillate rapidly along the table's tangent
- *     direction (the player's local X axis), with subtle wrist rotation.
- *   - When `rolling = false`, hands smoothly decelerate to a stop.
- *   - Movement is delta-time-based so it's frame-rate independent.
- *   - Respects reduced-motion: oscillation amplitude is reduced but the game
- *     rule (hands "rolling" then "stopped") still applies visually.
- *
- * The signature mechanic: the spec calls for "rapid horizontal oscillation" —
- * we use a sine wave at ~6 Hz with a wrist-twist component for realism.
+ *   - When `rolling = true`, hands sway between keyframes (Left to Right to Left).
+ *   - Keyframes at the start and end of each sway stroke use smooth cubic Bézier easing
+ *     to eliminate harsh reversals and maintain natural, steady physical motion.
+ *   - Movement is delta-time-based so it is frame-rate independent.
+ *   - Can be paused/resumed gracefully when the match is paused.
+ *   - Respects reduced-motion settings.
  */
 
 import * as THREE from "three";
 import type { HandModel } from "./HandModel";
 
 export interface HandAnimationConfig {
-  /** Oscillation frequency in Hz. Default 6. */
+  /** Oscillation frequency in Hz. Default 3.2 (steady, natural sway tempo). */
   frequency: number;
-  /** Lateral amplitude in world units. Default 0.32. */
+  /** Horizontal sway amplitude in world units (along hand lateral Y axis). Default 0.28. */
   lateralAmplitude: number;
-  /** Wrist rotation amplitude (radians). Default 0.55. */
+  /** Wrist roll amplitude (radians). Default 0.36. */
   wristAmplitude: number;
-  /** Forearm lift amplitude (vertical). Default 0.04. */
+  /** Forearm lift amplitude (vertical off table). Default 0.025. */
   verticalAmplitude: number;
   /** Reduced-motion multiplier. Default 1. */
   reducedMotionScale: number;
 }
 
 export const DEFAULT_ANIM_CONFIG: HandAnimationConfig = {
-  frequency: 6,
-  lateralAmplitude: 0.32,
-  wristAmplitude: 0.55,
-  verticalAmplitude: 0.04,
+  frequency: 3.2,
+  lateralAmplitude: 0.28,
+  wristAmplitude: 0.36,
+  verticalAmplitude: 0.025,
   reducedMotionScale: 1,
 };
+
+/**
+ * Evaluates a cubic Bézier ease-in-out curve with control points (x1, y1) and (x2, y2).
+ * Uses Newton-Raphson to solve for t at a given progress value, then samples y(t).
+ * Guarantees smooth easing (zero velocity / gentle acceleration and deceleration)
+ * at the start and end of each left-to-right sway stroke.
+ */
+export function cubicBezierEasing(progress: number, x1 = 0.42, y1 = 0.0, x2 = 0.58, y2 = 1.0): number {
+  const p = Math.max(0, Math.min(1, progress));
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+
+  let t = p;
+  for (let i = 0; i < 6; i++) {
+    const currentX = 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t;
+    const dx = 3 * (1 - t) * (1 - t) * x1 + 6 * (1 - t) * t * (x2 - x1) + 3 * t * t * (1 - x2);
+    if (Math.abs(dx) < 1e-6) break;
+    t -= (currentX - p) / dx;
+    t = Math.max(0, Math.min(1, t));
+  }
+
+  return 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t;
+}
+
+export interface SwayKeyframe {
+  progress: number;
+  lateral: number;
+  wristTwist: number;
+  verticalLift: number;
+}
+
+export const SWAY_KEYFRAMES: SwayKeyframe[] = [
+  { progress: 0.0, lateral: -1.0, wristTwist: -1.0, verticalLift: 0.0 },
+  { progress: 0.5, lateral: 1.0, wristTwist: 1.0, verticalLift: 0.0 },
+  { progress: 1.0, lateral: -1.0, wristTwist: -1.0, verticalLift: 0.0 },
+];
 
 /**
  * Animates a list of HandModel pivots. Each player's hands share a phase but
@@ -43,10 +76,12 @@ export const DEFAULT_ANIM_CONFIG: HandAnimationConfig = {
  */
 export class HandAnimator {
   private config: HandAnimationConfig;
-  /** elapsed seconds; only advances while `rolling` is true. */
+  /** elapsed seconds; only advances while `rolling` is true and not paused. */
   private elapsed = 0;
   /** Whether the hands are currently in the rolling phase. */
   rolling = false;
+  /** Whether the animator is paused. */
+  paused = false;
   /** Smooth-stop factor: 1 = full speed, 0 = stopped. */
   private speed = 0;
   /** Per-hand phase offsets. */
@@ -58,6 +93,11 @@ export class HandAnimator {
 
   setConfig(partial: Partial<HandAnimationConfig>): void {
     this.config = { ...this.config, ...partial };
+  }
+
+  /** Pause or resume the hand animation. */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
   }
 
   /** Add hands to animate. Each HandModel gets a unique phase offset. */
@@ -85,13 +125,13 @@ export class HandAnimator {
   }
 
   /**
-   * Per-frame update. `deltaSeconds` should be clamped to e.g. 1/30 max to
-   * avoid huge jumps after tab-switches.
+   * Per-frame update. Uses Bézier keyframe interpolation between left and right peaks.
    */
   update(deltaSeconds: number): void {
+    if (this.paused) return;
+
     // Smoothly approach target speed (1 when rolling, 0 when stopped).
     const target = this.rolling ? 1 : 0;
-    // Time constant ~120ms for smooth stop on zero, instant-ish start.
     const tau = this.rolling ? 0.04 : 0.18;
     this.speed += (target - this.speed) * (1 - Math.exp(-deltaSeconds / tau));
 
@@ -107,19 +147,44 @@ export class HandAnimator {
     const omega = cfg.frequency * Math.PI * 2;
 
     for (const [hand, phase] of this.phaseOffsets) {
-      const t = this.elapsed * omega + phase;
-      // Lateral oscillation along hand-local X.
-      const dx = Math.sin(t) * lateralA;
-      const dz = Math.sin(t * 0.5 + phase) * verticalA;
-      // Wrist rotation around Z (twist).
-      const rz = Math.sin(t) * wristA;
-      // Subtle forearm rotation around Y.
-      const ry = Math.sin(t * 0.7) * wristA * 0.3;
+      // Normalized cycle progress [0, 1) across the full left-right-left sway period
+      const cycleProgress = (((this.elapsed * omega + phase) / (Math.PI * 2)) % 1 + 1) % 1;
 
-      hand.handGroup.position.x = dx;
+      let swayFactor = 0;
+      let wristFactor = 0;
+      let liftFactor = 0;
+
+      if (cycleProgress < 0.5) {
+        // Keyframe 0.0 (Left) to Keyframe 0.5 (Right) with cubic Bézier easing at start & end
+        const segmentProgress = cycleProgress / 0.5;
+        const eased = cubicBezierEasing(segmentProgress, 0.42, 0.0, 0.58, 1.0);
+        swayFactor = -1.0 + 2.0 * eased;
+        wristFactor = -1.0 + 2.0 * eased;
+        liftFactor = Math.sin(segmentProgress * Math.PI);
+      } else {
+        // Keyframe 0.5 (Right) to Keyframe 1.0 (Left) with cubic Bézier easing at start & end
+        const segmentProgress = (cycleProgress - 0.5) / 0.5;
+        const eased = cubicBezierEasing(segmentProgress, 0.42, 0.0, 0.58, 1.0);
+        swayFactor = 1.0 - 2.0 * eased;
+        wristFactor = 1.0 - 2.0 * eased;
+        liftFactor = Math.sin(segmentProgress * Math.PI);
+      }
+
+      // Horizontal (left and right) oscillation along hand-local Y axis
+      const dy = swayFactor * lateralA;
+      // Slight vertical lift off table during center passage
+      const dz = liftFactor * verticalA;
+      // Natural wrist roll along the hand forearm axis (local X)
+      const rx = wristFactor * wristA;
+      // Subtle yaw pivoting slightly into the sway direction (local Z)
+      const rz = -swayFactor * wristA * 0.2;
+
+      hand.handGroup.position.x = 0;
+      hand.handGroup.position.y = dy;
       hand.handGroup.position.z = dz;
+      hand.handGroup.rotation.x = rx;
+      hand.handGroup.rotation.y = 0;
       hand.handGroup.rotation.z = rz;
-      hand.handGroup.rotation.y = ry;
     }
   }
 
@@ -127,6 +192,7 @@ export class HandAnimator {
   reset(): void {
     this.elapsed = 0;
     this.speed = 0;
+    this.paused = false;
     for (const hand of this.phaseOffsets.keys()) {
       hand.handGroup.position.set(0, 0, 0);
       hand.handGroup.rotation.set(0, 0, 0);

@@ -112,6 +112,14 @@ class SoundManager {
     this.play(440, 0.05, "square", 0.2);
   }
 
+  pause(): void {
+    this.play(440, 0.08, "triangle", 0.2, 330);
+  }
+
+  resume(): void {
+    this.play(330, 0.08, "triangle", 0.2, 440);
+  }
+
   click(): void {
     this.play(660, 0.03, "square", 0.15);
   }

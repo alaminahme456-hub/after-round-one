@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMatchStore } from "@/hooks/game/useMatchStore";
 import { sound } from "@/audio/soundManager";
-import { startingNumberMax, type MatchConfig } from "@/game/types";
+import { startingNumberMax, type MatchConfig, type SkinTone, SKIN_TONE_DEFS } from "@/game/types";
 import { PENALTY_SUGGESTIONS } from "@/game/penaltyRules";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -26,6 +26,7 @@ export function Lobby() {
   const setSettings = useMatchStore((s) => s.setSettings);
 
   const [playerNames, setPlayerNames] = useState<string[]>(["Player 1", "Player 2"]);
+  const [playerSkinTones, setPlayerSkinTones] = useState<SkinTone[]>([0, 1, 2, 3, 4]);
   const [joinCode, setJoinCode] = useState("");
   const [createdCode, setCreatedCode] = useState<string | null>(null);
   const [onlineStatus, setOnlineStatus] = useState<string>("");
@@ -45,6 +46,9 @@ export function Lobby() {
     sound.click();
     if (!_match) return;
     _match.enterLobby(effectiveNames, { mode: "local" });
+    effectiveNames.forEach((_, i) => {
+      _match.setPlayerSkinTone(i + 1, playerSkinTones[i] ?? ((i % 5) as SkinTone));
+    });
     _match.startStartingNumberSelection();
   };
 
@@ -68,14 +72,14 @@ export function Lobby() {
   const beginOnline = () => {
     sound.click();
     if (!_match) return;
-    // Online multiplayer uses the same engine; the network layer (BroadcastChannel)
-    // syncs state between tabs. Server-authoritative validation is performed by
-    // the room host's Match instance.
     const names =
       cfg.mode === "online"
         ? ["You", ...Array(cfg.playerCount - 1).fill(0).map((_, i) => `Player ${i + 2}`)]
         : effectiveNames;
     _match.enterLobby(names, { mode: "online" });
+    names.forEach((_, i) => {
+      _match.setPlayerSkinTone(i + 1, playerSkinTones[i] ?? ((i % 5) as SkinTone));
+    });
     _match.startStartingNumberSelection();
   };
 
@@ -256,36 +260,121 @@ export function Lobby() {
                     {onlineStatus}
                   </div>
                 )}
+                {/* Host 3D Hand Skin Tone Selection */}
+                <div className="aro-panel rounded-xl p-3.5 border border-white/10 flex items-center justify-between">
+                  <span className="text-xs text-white/70 font-medium">
+                    Your 3D Hand: <span className="text-white font-bold">{SKIN_TONE_DEFS[playerSkinTones[0] ?? 0]?.name}</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {SKIN_TONE_DEFS.map((def) => {
+                      const isSelected = (playerSkinTones[0] ?? 0) === def.id;
+                      return (
+                        <button
+                          key={def.id}
+                          type="button"
+                          onClick={() => {
+                            sound.click();
+                            const nextTones = [...playerSkinTones];
+                            nextTones[0] = def.id;
+                            setPlayerSkinTones(nextTones);
+                          }}
+                          title={`${def.name} (${def.description})`}
+                          className={`w-7 h-7 rounded-full transition-all relative flex items-center justify-center cursor-pointer ${
+                            isSelected
+                              ? "ring-2 ring-[#ff5a3c] ring-offset-2 ring-offset-[#07090d] scale-110 shadow-md"
+                              : "opacity-75 hover:opacity-100 hover:scale-105"
+                          }`}
+                          style={{ backgroundColor: def.hex }}
+                        >
+                          {isSelected && (
+                            <span
+                              className="w-2 h-2 rounded-full"
+                              style={{
+                                backgroundColor: def.id === 0 ? "#2b1a14" : "#ffffff",
+                              }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <Button className="aro-btn-primary w-full" onClick={beginOnline} style={{ minHeight: 56 }}>
                   Start Online Match →
                 </Button>
               </div>
             ) : (
               <>
-                <div className="space-y-3">
-                  {effectiveNames.map((name, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <span
-                        className="rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm"
-                        style={{
-                          background: ["#ff5a3c", "#ffb547", "#5b8def", "#a55bff", "#3cd2a5"][i % 5],
-                          color: "#0a0d12",
-                        }}
-                      >
-                        {i + 1}
-                      </span>
-                      <Input
-                        value={name}
-                        onChange={(e) => {
-                          const next = [...effectiveNames];
-                          next[i] = e.target.value.slice(0, 16);
-                          setPlayerNames(next);
-                        }}
-                        className="bg-white/5 border-white/10"
-                        placeholder={`Player ${i + 1}`}
-                      />
-                    </div>
-                  ))}
+                <div className="space-y-3.5">
+                  {effectiveNames.map((name, i) => {
+                    const currentTone = playerSkinTones[i] ?? ((i % 5) as SkinTone);
+                    return (
+                      <div key={i} className="aro-panel rounded-xl p-3.5 border border-white/10 space-y-2.5">
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm shrink-0"
+                            style={{
+                              background: ["#ff5a3c", "#ffb547", "#5b8def", "#a55bff", "#3cd2a5"][i % 5],
+                              color: "#0a0d12",
+                            }}
+                          >
+                            {i + 1}
+                          </span>
+                          <Input
+                            value={name}
+                            onChange={(e) => {
+                              const next = [...effectiveNames];
+                              next[i] = e.target.value.slice(0, 16);
+                              setPlayerNames(next);
+                            }}
+                            className="bg-white/5 border-white/10 flex-1 text-sm font-medium"
+                            placeholder={`Player ${i + 1}`}
+                          />
+                        </div>
+
+                        {/* Hand Skin Tone selection */}
+                        <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                          <span className="text-xs text-white/60 font-medium flex items-center gap-1.5">
+                            <span>3D Hand Skin:</span>
+                            <span className="text-white/90 font-semibold">{SKIN_TONE_DEFS[currentTone]?.name}</span>
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {SKIN_TONE_DEFS.map((def) => {
+                              const isSelected = currentTone === def.id;
+                              return (
+                                <button
+                                  key={def.id}
+                                  type="button"
+                                  onClick={() => {
+                                    sound.click();
+                                    const nextTones = [...playerSkinTones];
+                                    nextTones[i] = def.id;
+                                    setPlayerSkinTones(nextTones);
+                                  }}
+                                  title={`${def.name} (${def.description})`}
+                                  className={`w-7 h-7 rounded-full transition-all relative flex items-center justify-center cursor-pointer ${
+                                    isSelected
+                                      ? "ring-2 ring-[#ff5a3c] ring-offset-2 ring-offset-[#07090d] scale-110 shadow-md"
+                                      : "opacity-75 hover:opacity-100 hover:scale-105"
+                                  }`}
+                                  style={{ backgroundColor: def.hex }}
+                                >
+                                  {isSelected && (
+                                    <span
+                                      className="w-2 h-2 rounded-full"
+                                      style={{
+                                        backgroundColor: def.id === 0 ? "#2b1a14" : "#ffffff",
+                                      }}
+                                    />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 <Button className="aro-btn-primary w-full" onClick={startLocal} style={{ minHeight: 56 }}>
                   Start Local Match →

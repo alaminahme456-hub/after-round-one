@@ -21,7 +21,7 @@ export class CameraController {
   private currentLookAt = new THREE.Vector3(0, 0, 0);
 
   constructor(opts: CameraOptions) {
-    this.camera = new THREE.PerspectiveCamera(50, opts.aspect, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(34, opts.aspect, 0.1, 100);
     this.camera.position.copy(this.currentPos);
     // Setting up to (-1, 0, 0) rotates the camera around the Y-axis looking down at (0, 0, 0)
     // so that the +X axis (player position) appears at the bottom of the screen.
@@ -35,18 +35,19 @@ export class CameraController {
   }
 
   /**
-   * Reframe the camera based on player count + screen aspect.
+   * Reframe the camera closer to the hand and table by narrowing FOV and reducing distance.
    * Maintains top-down view directly on the Y-axis.
    */
   reframe(activePlayerCount: number, aspect: number, isMobile: boolean): void {
-    const tableSpan = 4.2 + Math.max(0, activePlayerCount - 2) * 0.35;
-    const fov = isMobile && aspect < 1 ? 55 : aspect < 1 ? 52 : 48;
+    const tableSpan = 3.3 + Math.max(0, activePlayerCount - 2) * 0.25;
+    // Narrowed FOV brings the hand much closer and creates a clean, focused framing
+    const fov = isMobile && aspect < 1 ? 38 : aspect < 1 ? 35 : 32;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
 
     const fovRad = (fov * Math.PI) / 180;
     const vSpanNeeded = aspect < 1 ? tableSpan / Math.max(0.4, aspect) : tableSpan;
-    const height = Math.max(4.6, (vSpanNeeded / 2) / Math.tan(fovRad / 2));
+    const height = Math.max(3.8, (vSpanNeeded / 2) / Math.tan(fovRad / 2));
 
     // Strictly position on the Y-axis (X = 0, Z = 0) looking down at (0, 0, 0)
     this.targetPos.set(0, height, 0);

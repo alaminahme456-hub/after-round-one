@@ -1,70 +1,97 @@
 /**
- * HandModel.ts — procedural rigged 3D human hand (forearm + palm + 5 fingers).
+ * HandModel.ts — procedural sculpted 3D human hand (forearm + palm + 5 articulated fingers).
  *
- * Why procedural: no GLB assets are present in the repo and the spec forbids
- * inventing model paths. We build a recognizable stylized human hand from
- * Three.js primitives, with skin-tone variations per player (visual only).
- *
- * Each finger is a small hierarchy of capsules (3 phalanges per finger, 2 for
- * the thumb) so we can later animate "rolling" via root translation + wrist
- * rotation. The mesh is grouped under a `pivot` Object3D so the rolling
- * animation can translate/rotate the whole hand without disturbing the local
- * finger transforms.
- *
- * The hand is oriented palm-down, fingers pointing +X, palm facing +Z.
- * The pivot's position is set by the caller (TableLayout) to sit at the
- * player's edge of the table.
+ * Anatomical features:
+ *   - Contoured palm with fleshy thenar (thumb) and hypothenar (pinky) eminences.
+ *   - Opposable thumb angled naturally outward.
+ *   - Proportional fingers with 3 articulated phalanges (proximal, intermediate, distal).
+ *   - Rounded fingertip pulp pads and glossy fingernails.
+ *   - Dual-tone PBR skin materials (dorsal skin + warmer palmar pads).
+ *   - Authentic support for Fair, Brown, Chocolate, Black, and Tan skin tones.
  */
 
 import * as THREE from "three";
-import type { SkinTone } from "@/game/types";
+import { type SkinTone, SKIN_TONE_DEFS } from "@/game/types";
 
-/** Five distinct natural human skin tones (visual only — never used for logic). */
-export const SKIN_TONE_COLORS: THREE.ColorRepresentation[] = [
-  0xf3d2b4, // light
-  0xe5b188, // medium-light
-  0xb07a4f, // medium
-  0x8a5230, // medium-dark
-  0x5e3522, // dark
-];
+/** Skin tone color values mapped from definitions */
+export const SKIN_TONE_COLORS: THREE.ColorRepresentation[] = SKIN_TONE_DEFS.map(
+  (def) => def.colorNumber,
+);
+
+/** Computes a realistic warmer/lighter undertone for the palm and finger pads */
+function computePalmarColor(dorsalColor: number): number {
+  const c = new THREE.Color(dorsalColor);
+  // Blend slightly with warm skin cream tone
+  c.lerp(new THREE.Color(0xf5d3be), 0.28);
+  c.offsetHSL(0.015, -0.06, 0.08);
+  return c.getHex();
+}
 
 export interface HandModelOptions {
   skinTone: SkinTone;
-  /** Quality: low omits fingernails + reduces segment count. */
+  /** Quality: low omits fingernails and joint caps + reduces segment count. */
   quality: "low" | "medium" | "high";
 }
 
-interface FingerSpec {
+interface FingerPhalangeSpec {
   name: string;
-  /** Base position relative to palm (x = along fingers, y = across palm). */
+  isThumb?: boolean;
   base: [number, number, number];
-  /** Phalange lengths. */
   lengths: number[];
-  /** Finger radii. */
   radii: number[];
-  /** Initial bend (radians). */
-  bend?: number;
+  baseRotation?: [number, number, number];
 }
 
-const FINGER_SPECS: FingerSpec[] = [
-  { name: "thumb", base: [-0.18, -0.06, 0.02], lengths: [0.06, 0.06, 0.05], radii: [0.028, 0.025, 0.022], bend: 0.3 },
-  { name: "index", base: [0.02, 0.05, 0], lengths: [0.07, 0.07, 0.06], radii: [0.022, 0.019, 0.016] },
-  { name: "middle", base: [0.02, 0.0, 0], lengths: [0.08, 0.075, 0.06], radii: [0.024, 0.020, 0.017] },
-  { name: "ring", base: [0.02, -0.05, 0], lengths: [0.07, 0.065, 0.05], radii: [0.022, 0.019, 0.016] },
-  { name: "pinky", base: [0.02, -0.10, 0], lengths: [0.055, 0.05, 0.045], radii: [0.020, 0.017, 0.015] },
+const FINGER_SPECS: FingerPhalangeSpec[] = [
+  {
+    name: "thumb",
+    isThumb: true,
+    base: [0.065, 0.082, -0.008],
+    lengths: [0.064, 0.052],
+    radii: [0.024, 0.020],
+    baseRotation: [0.25, -0.15, 0.65],
+  },
+  {
+    name: "index",
+    base: [0.170, 0.046, 0.003],
+    lengths: [0.068, 0.056, 0.046],
+    radii: [0.020, 0.017, 0.014],
+    baseRotation: [0, 0, 0.03],
+  },
+  {
+    name: "middle",
+    base: [0.178, 0.016, 0.005],
+    lengths: [0.076, 0.064, 0.052],
+    radii: [0.021, 0.018, 0.015],
+    baseRotation: [0, 0, 0.0],
+  },
+  {
+    name: "ring",
+    base: [0.172, -0.016, 0.003],
+    lengths: [0.070, 0.058, 0.048],
+    radii: [0.020, 0.017, 0.014],
+    baseRotation: [0, 0, -0.03],
+  },
+  {
+    name: "pinky",
+    base: [0.160, -0.046, -0.002],
+    lengths: [0.054, 0.044, 0.038],
+    radii: [0.017, 0.014, 0.012],
+    baseRotation: [0, 0, -0.07],
+  },
 ];
 
-/**
- * A complete hand model: forearm + palm + 5 fingers, all under a pivot group.
- * The pivot is what gets positioned around the table.
- */
 export class HandModel {
-  /** Outer pivot: position this around the table. */
+  /** Outer pivot: positioned around the table. */
   readonly pivot: THREE.Group;
-  /** Inner hand group: roll this for animation. */
+  /** Inner hand group: animated for the rolling/swaying motion. */
   readonly handGroup: THREE.Group;
-  readonly skinTone: SkinTone;
+  skinTone: SkinTone;
   readonly quality: HandModelOptions["quality"];
+
+  private dorsalMaterial: THREE.MeshStandardMaterial;
+  private palmarMaterial: THREE.MeshStandardMaterial;
+  private nailMaterial?: THREE.MeshStandardMaterial;
   private disposables: Array<{ dispose: () => void }> = [];
 
   constructor(opts: HandModelOptions) {
@@ -74,110 +101,196 @@ export class HandModel {
     this.handGroup = new THREE.Group();
     this.pivot.add(this.handGroup);
 
-    const skinColor = SKIN_TONE_COLORS[opts.skinTone] ?? SKIN_TONE_COLORS[0];
-    const skinMaterial = new THREE.MeshStandardMaterial({
-      color: skinColor,
-      roughness: 0.7,
-      metalness: 0.05,
-    });
-    this.disposables.push(skinMaterial);
+    const baseColor = SKIN_TONE_COLORS[opts.skinTone] ?? SKIN_TONE_COLORS[0];
+    const palmarColor = computePalmarColor(Number(baseColor));
 
-    // Forearm: a tapered cylinder.
-    const forearmLen = 0.35;
-    const forearmGeo = new THREE.CylinderGeometry(0.055, 0.075, forearmLen, opts.quality === "low" ? 8 : 16);
+    // Dorsal skin (back of hand, arm, knuckles)
+    this.dorsalMaterial = new THREE.MeshStandardMaterial({
+      color: baseColor,
+      roughness: 0.62,
+      metalness: 0.03,
+    });
+    this.disposables.push(this.dorsalMaterial);
+
+    // Palmar skin (palm, thenar/hypothenar pads, fingertip pulps)
+    this.palmarMaterial = new THREE.MeshStandardMaterial({
+      color: palmarColor,
+      roughness: 0.68,
+      metalness: 0.02,
+    });
+    this.disposables.push(this.palmarMaterial);
+
+    if (opts.quality !== "low") {
+      this.nailMaterial = new THREE.MeshStandardMaterial({
+        color: 0xf5e6de,
+        roughness: 0.28,
+        metalness: 0.06,
+      });
+      this.disposables.push(this.nailMaterial);
+    }
+
+    this.buildArmAndWrist();
+    this.buildSculptedPalm();
+    this.buildArticulatedFingers();
+  }
+
+  /** Update skin tone in-place across all hand materials. */
+  setSkinTone(tone: SkinTone): void {
+    this.skinTone = tone;
+    const baseColor = SKIN_TONE_COLORS[tone] ?? SKIN_TONE_COLORS[0];
+    const palmarColor = computePalmarColor(Number(baseColor));
+    this.dorsalMaterial.color.set(baseColor);
+    this.palmarMaterial.color.set(palmarColor);
+  }
+
+  private buildArmAndWrist(): void {
+    const isLow = this.quality === "low";
+    const segs = isLow ? 10 : 20;
+
+    // Forearm: natural tapered cylinder
+    const forearmLen = 0.38;
+    const forearmGeo = new THREE.CylinderGeometry(0.056, 0.076, forearmLen, segs);
     this.disposables.push(forearmGeo);
-    const forearm = new THREE.Mesh(forearmGeo, skinMaterial);
-    forearm.rotation.z = Math.PI / 2; // lay along +X
-    forearm.position.x = -forearmLen / 2;
+    const forearm = new THREE.Mesh(forearmGeo, this.dorsalMaterial);
+    forearm.rotation.z = Math.PI / 2;
+    forearm.position.x = -forearmLen / 2 - 0.02;
+    forearm.castShadow = !isLow;
+    forearm.receiveShadow = !isLow;
     this.handGroup.add(forearm);
 
-    // Wrist joint: small sphere.
-    const wristGeo = new THREE.SphereGeometry(0.06, opts.quality === "low" ? 8 : 16, 12);
+    // Carpal wrist complex: smooth transitional ellipsoid
+    const wristGeo = new THREE.SphereGeometry(0.062, segs, 12);
     this.disposables.push(wristGeo);
-    const wrist = new THREE.Mesh(wristGeo, skinMaterial);
+    const wrist = new THREE.Mesh(wristGeo, this.dorsalMaterial);
+    wrist.scale.set(1.1, 1.25, 0.85);
     wrist.position.set(0, 0, 0);
+    wrist.castShadow = !isLow;
+    wrist.receiveShadow = !isLow;
     this.handGroup.add(wrist);
+  }
 
-    // Palm: a flattened box with rounded edges (use box for simplicity).
-    const palmGeo = new THREE.BoxGeometry(0.16, 0.16, 0.04);
+  private buildSculptedPalm(): void {
+    const isLow = this.quality === "low";
+    const segs = isLow ? 8 : 16;
+
+    // Main metacarpal palm slab: slightly tapered and curved
+    const palmGeo = new THREE.BoxGeometry(0.165, 0.145, 0.046);
     this.disposables.push(palmGeo);
-    const palm = new THREE.Mesh(palmGeo, skinMaterial);
-    palm.position.set(0.08, 0, 0);
-    palm.rotation.x = 0;
+    const palm = new THREE.Mesh(palmGeo, this.dorsalMaterial);
+    palm.position.set(0.088, 0.005, 0.002);
+    palm.castShadow = !isLow;
+    palm.receiveShadow = !isLow;
     this.handGroup.add(palm);
 
-    // Fingers — built as small hierarchies under the palm.
-    for (const spec of FINGER_SPECS) {
-      this.buildFinger(spec, skinMaterial);
-    }
+    // Thenar eminence (thumb base muscle pad): fleshy oval mound on thumb side
+    const thenarGeo = new THREE.SphereGeometry(0.046, segs, 12);
+    this.disposables.push(thenarGeo);
+    const thenar = new THREE.Mesh(thenarGeo, this.palmarMaterial);
+    thenar.scale.set(1.4, 0.95, 0.75);
+    thenar.position.set(0.062, 0.058, -0.012);
+    thenar.rotation.z = 0.25;
+    this.handGroup.add(thenar);
 
-    // Optional fingernails for medium/high quality.
-    if (opts.quality !== "low") {
-      const nailMaterial = new THREE.MeshStandardMaterial({
-        color: 0xf2e6d8,
-        roughness: 0.4,
-        metalness: 0.0,
-      });
-      this.disposables.push(nailMaterial);
-      // One small disc at each fingertip.
-      for (const spec of FINGER_SPECS) {
-        const lastLen = spec.lengths[spec.lengths.length - 1];
-        const lastRad = spec.radii[spec.radii.length - 1];
-        const nailGeo = new THREE.CylinderGeometry(
-          lastRad * 0.7,
-          lastRad * 0.7,
-          0.005,
-          8,
-        );
-        this.disposables.push(nailGeo);
-        const nail = new THREE.Mesh(nailGeo, nailMaterial);
-        // Position is set later via the finger hierarchy; for simplicity we
-        // attach to handGroup at the fingertip position computed below.
-        // Compute fingertip X position by summing lengths.
-        let x = 0.08 + 0.10; // palm center + half palm
-        for (const l of spec.lengths) x += l;
-        nail.position.set(x, spec.base[1], spec.base[2] + 0.025);
-        nail.rotation.x = Math.PI / 2;
-        this.handGroup.add(nail);
+    // Hypothenar eminence (pinky lateral muscle pad): elongated pad along outer edge
+    const hypothenarGeo = new THREE.SphereGeometry(0.040, segs, 10);
+    this.disposables.push(hypothenarGeo);
+    const hypothenar = new THREE.Mesh(hypothenarGeo, this.palmarMaterial);
+    hypothenar.scale.set(1.5, 0.85, 0.65);
+    hypothenar.position.set(0.075, -0.052, -0.010);
+    this.handGroup.add(hypothenar);
+
+    // Metacarpal knuckle caps (MCP ridge where fingers meet palm)
+    const knucklePositions: [number, number][] = [
+      [0.170, 0.046],
+      [0.178, 0.016],
+      [0.172, -0.016],
+      [0.160, -0.046],
+    ];
+    for (const [kx, ky] of knucklePositions) {
+      const kGeo = new THREE.SphereGeometry(0.022, isLow ? 6 : 10, 8);
+      this.disposables.push(kGeo);
+      const kMesh = new THREE.Mesh(kGeo, this.dorsalMaterial);
+      kMesh.position.set(kx, ky, 0.006);
+      this.handGroup.add(kMesh);
+    }
+  }
+
+  private buildArticulatedFingers(): void {
+    const isLow = this.quality === "low";
+    const capSegs = isLow ? 4 : 8;
+
+    for (const spec of FINGER_SPECS) {
+      const fingerRoot = new THREE.Group();
+      fingerRoot.position.set(...spec.base);
+      if (spec.baseRotation) {
+        fingerRoot.rotation.set(...spec.baseRotation);
+      }
+      this.handGroup.add(fingerRoot);
+
+      let currentX = 0;
+      let prevRadius = spec.radii[0];
+
+      for (let i = 0; i < spec.lengths.length; i++) {
+        const len = spec.lengths[i];
+        const rad = spec.radii[i];
+        const isDistal = i === spec.lengths.length - 1;
+
+        // Phalange segment (capsule)
+        const segGeo = new THREE.CapsuleGeometry(rad, len, 4, capSegs);
+        this.disposables.push(segGeo);
+        const segMesh = new THREE.Mesh(segGeo, this.dorsalMaterial);
+        segMesh.rotation.z = -Math.PI / 2;
+        segMesh.position.set(currentX + len / 2, 0, 0);
+        segMesh.castShadow = !isLow;
+        segMesh.receiveShadow = !isLow;
+        fingerRoot.add(segMesh);
+
+        // Joint knuckle sphere (between phalanges)
+        if (i > 0) {
+          const jointGeo = new THREE.SphereGeometry(prevRadius * 0.98, isLow ? 6 : 10, 6);
+          this.disposables.push(jointGeo);
+          const jointMesh = new THREE.Mesh(jointGeo, this.dorsalMaterial);
+          jointMesh.position.set(currentX, 0, 0.002);
+          fingerRoot.add(jointMesh);
+        }
+
+        // On distal segment: add fleshy fingertip pad & fingernail
+        if (isDistal) {
+          const tipX = currentX + len + rad * 0.4;
+
+          // Soft fleshy pulp pad on the palmar/underside (-Z)
+          const padGeo = new THREE.SphereGeometry(rad * 0.92, isLow ? 6 : 10, 8);
+          this.disposables.push(padGeo);
+          const padMesh = new THREE.Mesh(padGeo, this.palmarMaterial);
+          padMesh.scale.set(1.2, 0.95, 0.7);
+          padMesh.position.set(currentX + len * 0.7, 0, -rad * 0.45);
+          fingerRoot.add(padMesh);
+
+          // Translucent glossy fingernail on the dorsal/top side (+Z)
+          if (!isLow && this.nailMaterial) {
+            const nailGeo = new THREE.CylinderGeometry(
+              rad * 0.75,
+              rad * 0.72,
+              0.004,
+              12,
+            );
+            this.disposables.push(nailGeo);
+            const nail = new THREE.Mesh(nailGeo, this.nailMaterial);
+            nail.scale.set(1.15, 1.0, 1.35);
+            nail.position.set(tipX - rad * 0.35, 0, rad * 0.78);
+            nail.rotation.x = Math.PI / 2;
+            nail.rotation.z = -0.15;
+            fingerRoot.add(nail);
+          }
+        }
+
+        currentX += len + rad * 0.2;
+        prevRadius = rad;
       }
     }
-
-    // Initial orientation: hand lies palm-down, fingers pointing +X.
-    // The Table layout will rotate the pivot so fingers face the table center.
   }
 
-  private buildFinger(spec: FingerSpec, material: THREE.Material): void {
-    // Root joint under handGroup at palm edge.
-    let parent: THREE.Object3D = this.handGroup;
-    let x = 0.08 + 0.08; // palm center + half-depth to reach palm edge
-    let y = spec.base[1];
-    let z = spec.base[2];
-
-    for (let i = 0; i < spec.lengths.length; i++) {
-      const len = spec.lengths[i];
-      const rad = spec.radii[i];
-      const segGeo = new THREE.CapsuleGeometry(rad, len, 4, this.quality === "low" ? 4 : 8);
-      this.disposables.push(segGeo);
-      const seg = new THREE.Mesh(segGeo, material);
-      // Capsule axis is Y; rotate so it points along +X.
-      seg.rotation.z = -Math.PI / 2;
-      seg.position.set(x + len / 2, y, z);
-      parent.add(seg);
-
-      // Knuckle sphere at the joint.
-      const jointGeo = new THREE.SphereGeometry(rad * 0.9, 8, 6);
-      this.disposables.push(jointGeo);
-      const joint = new THREE.Mesh(jointGeo, material);
-      joint.position.set(x + len, y, z);
-      parent.add(joint);
-
-      x += len;
-      // parent stays as handGroup; further segments are placed at x.
-      parent = this.handGroup;
-    }
-  }
-
-  /** Dispose all GPU resources. Call when the player leaves the scene. */
+  /** Dispose all GPU resources. */
   dispose(): void {
     for (const d of this.disposables) {
       try {

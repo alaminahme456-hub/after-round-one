@@ -191,6 +191,9 @@ export class GameScene {
       const x = Math.cos(angle) * tableRadius;
       const z = Math.sin(angle) * tableRadius;
       let hand = this.hands.get(p.id);
+      if (hand && hand.skinTone !== p.skinTone) {
+        hand.setSkinTone(p.skinTone);
+      }
       if (!hand) {
         hand = new HandModel({
           skinTone: p.skinTone,
@@ -218,6 +221,10 @@ export class GameScene {
   setRolling(rolling: boolean): void {
     if (rolling) this.animator.start();
     else this.animator.stop();
+  }
+
+  setPaused(paused: boolean): void {
+    this.animator.setPaused(paused);
   }
 
   setReducedMotion(on: boolean): void {

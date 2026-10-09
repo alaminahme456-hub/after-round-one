@@ -21,8 +21,8 @@ export function MainMenu({
   onSettings,
 }: MainMenuProps) {
   const [focusIdx, setFocusIdx] = useState(0);
-  const buttons: { label: string; action: () => void; primary?: boolean }[] = [
-    { label: "Play", action: onPlay, primary: true },
+  const buttons: { label: string; action: () => void; primary?: boolean; badge?: string }[] = [
+    { label: "Play", action: onPlay, primary: true, badge: "Single Player vs AI" },
     { label: "Local Multiplayer", action: onLocalMultiplayer },
     { label: "Create Room", action: onCreateRoom },
     { label: "Join Room", action: onJoinRoom },
@@ -75,12 +75,17 @@ export function MainMenu({
             onMouseEnter={() => setFocusIdx(i)}
             className={
               b.primary
-                ? `aro-btn-primary rounded-xl px-6 py-4 text-lg sm:text-xl ${focusIdx === i ? "ring-2 ring-white/40" : ""}`
-                : `aro-btn-secondary rounded-xl px-6 py-3.5 text-base sm:text-lg ${focusIdx === i ? "ring-2 ring-[#ff5a3c]/60" : ""}`
+                ? `aro-btn-primary rounded-xl px-6 py-4 text-lg sm:text-xl flex items-center justify-between ${focusIdx === i ? "ring-2 ring-white/40" : ""}`
+                : `aro-btn-secondary rounded-xl px-6 py-3.5 text-base sm:text-lg flex items-center justify-between ${focusIdx === i ? "ring-2 ring-[#ff5a3c]/60" : ""}`
             }
             style={{ minHeight: 56 }}
           >
-            {b.label}
+            <span>{b.label}</span>
+            {b.badge && (
+              <span className="text-[11px] font-bold uppercase tracking-wider bg-black/40 text-[#ffb547] px-2.5 py-1 rounded-full border border-white/10">
+                {b.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>

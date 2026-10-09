@@ -12,7 +12,7 @@
 import { create } from "zustand";
 import { Match } from "@/game/gameState";
 import type { MatchSnapshot } from "@/game/gameState";
-import type { MatchConfig, StartingNumber } from "@/game/types";
+import type { MatchConfig, StartingNumber, SkinTone } from "@/game/types";
 
 interface Settings {
   soundEnabled: boolean;
@@ -37,6 +37,8 @@ interface MatchStore {
   updateConfig: (partial: Partial<MatchConfig>) => void;
   /** Convenience: set a player's starting number. */
   setStartingNumber: (playerId: number, n: StartingNumber) => void;
+  /** Convenience: set a player's skin tone. */
+  setPlayerSkinTone: (playerId: number, skinTone: SkinTone) => void;
   /** Convenience: mark a player ready. */
   setReady: (playerId: number, ready: boolean) => void;
 }
@@ -98,6 +100,12 @@ export const useMatchStore = create<MatchStore>((set, get) => ({
     const match = get()._match;
     if (!match) return;
     match.setStartingNumber(playerId, n);
+  },
+
+  setPlayerSkinTone: (playerId, skinTone) => {
+    const match = get()._match;
+    if (!match) return;
+    match.setPlayerSkinTone(playerId, skinTone);
   },
 
   setReady: (playerId, ready) => {
