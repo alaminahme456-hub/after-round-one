@@ -49,10 +49,12 @@ export function GameScreen() {
     const currentlyPaused = Boolean(m.getSnapshot().isPaused);
     if (!currentlyPaused) {
       sound.pause();
+      sound.pauseRoundCountdownAudio();
       m.pause();
       sceneRef.current?.setPaused(true);
     } else {
       sound.resume();
+      sound.resumeRoundCountdownAudio();
       m.resume();
       sceneRef.current?.setPaused(false);
     }
@@ -120,7 +122,7 @@ export function GameScreen() {
           lastTickRef.current = t.remainingSeconds;
           setRemaining(t.remainingSeconds);
           setTier(tensionTier(t));
-          if (t.remainingSeconds > 0) sound.countdownTick(tensionTier(t));
+          // The uploaded round audio replaces individual ticking sounds.
         }
         if (t.expired) {
           m.enterSubmissionPhase();
