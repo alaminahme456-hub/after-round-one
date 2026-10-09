@@ -161,7 +161,7 @@ export class GameScene {
    * Rebuild the per-player hand roster. Hands are positioned evenly around
    * the table rim. Spectators' hands fade out and are removed.
    */
-  setPlayers(players: PlayerState[]): void {
+  setPlayers(players: PlayerState[], localPlayerId?: number): void {
     if (!this.table) return;
 
     const active = players.filter((p) => !p.isSpectator && p.connected);
@@ -178,11 +178,16 @@ export class GameScene {
     }
 
     // Position active hands around the table.
+    // The player paddle/hand is placed at angle 0 (world +X), which camera renders at the bottom of the screen.
     const n = active.length;
     const tableRadius = 1.55;
+    const localIdx = localPlayerId !== undefined ? active.findIndex((p) => p.id === localPlayerId) : 0;
+    const offset = localIdx >= 0 ? localIdx : 0;
+
     for (let i = 0; i < n; i++) {
       const p = active[i];
-      const angle = (i / n) * Math.PI * 2;
+      const relIdx = (i - offset + n) % n;
+      const angle = (relIdx / n) * Math.PI * 2;
       const x = Math.cos(angle) * tableRadius;
       const z = Math.sin(angle) * tableRadius;
       let hand = this.hands.get(p.id);
@@ -198,7 +203,7 @@ export class GameScene {
       // Position the pivot at the table edge, oriented to face the center.
       hand.pivot.position.set(x, 0.08, z);
       // Rotate so the hand's +X (fingers) points inward toward origin.
-      hand.pivot.rotation.y = -angle + Math.PI / 2;
+      hand.pivot.rotation.y = Math.PI - angle;
       // Slight downward tilt so fingers rest on the table.
       hand.pivot.rotation.z = -0.15;
     }

@@ -45,7 +45,7 @@ export function GameScreen() {
     });
     scene.mount(containerRef.current);
     sceneRef.current = scene;
-    scene.setPlayers(snapshot.players);
+    scene.setPlayers(snapshot.players, snapshot.localPlayerId);
     if (snapshot.state === "ROLLING") scene.setRolling(true);
 
     return () => {
@@ -57,8 +57,8 @@ export function GameScreen() {
 
   // Sync players into the 3D scene whenever the roster changes.
   useEffect(() => {
-    sceneRef.current?.setPlayers(snapshot.players);
-  }, [snapshot.players]);
+    sceneRef.current?.setPlayers(snapshot.players, snapshot.localPlayerId);
+  }, [snapshot.players, snapshot.localPlayerId]);
 
   // Rolling state.
   useEffect(() => {

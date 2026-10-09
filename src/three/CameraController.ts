@@ -1,12 +1,9 @@
 /**
- * CameraController.ts — cinematic camera framing for 2-5 players.
+ * CameraController.ts — top-down camera framing for 2-5 players.
  *
- * The camera sits at an elevated, slightly angled position and frames the
- * whole table + all active hands. When the player count changes (e.g. a
- * player becomes a spectator), the camera smoothly re-frames.
- *
- * For local play we use a single shared camera. For mobile, we widen the FOV
- * and pull the camera back so all hands remain visible on smaller screens.
+ * Sits directly on the Y-axis looking straight down at coordinates (0, 0, 0),
+ * oriented so that the player paddle / hand appears at the bottom of the screen.
+ * Automatically reframes height and FOV based on player count and viewport aspect ratio.
  */
 
 import * as THREE from "three";
@@ -18,14 +15,17 @@ export interface CameraOptions {
 
 export class CameraController {
   readonly camera: THREE.PerspectiveCamera;
-  private targetPos = new THREE.Vector3(0, 2.2, 4.2);
-  private currentPos = new THREE.Vector3(0, 4, 8);
+  private targetPos = new THREE.Vector3(0, 5.0, 0);
+  private currentPos = new THREE.Vector3(0, 5.0, 0);
   private lookAt = new THREE.Vector3(0, 0, 0);
   private currentLookAt = new THREE.Vector3(0, 0, 0);
 
   constructor(opts: CameraOptions) {
     this.camera = new THREE.PerspectiveCamera(50, opts.aspect, 0.1, 100);
     this.camera.position.copy(this.currentPos);
+    // Setting up to (-1, 0, 0) rotates the camera around the Y-axis looking down at (0, 0, 0)
+    // so that the +X axis (player position) appears at the bottom of the screen.
+    this.camera.up.set(-1, 0, 0);
     this.camera.lookAt(this.currentLookAt);
   }
 
@@ -36,42 +36,46 @@ export class CameraController {
 
   /**
    * Reframe the camera based on player count + screen aspect.
-   * More players → wider framing → camera pulls back slightly.
+   * Maintains top-down view directly on the Y-axis.
    */
   reframe(activePlayerCount: number, aspect: number, isMobile: boolean): void {
-    // Pull camera back as players increase.
-    const baseDist = isMobile ? 5.2 : 4.4;
-    const dist = baseDist + Math.max(0, activePlayerCount - 2) * 0.35;
-    const height = isMobile ? 2.6 : 2.3;
-    // Slight angular offset for cinematic feel; never break top-down readability.
-    const angle = isMobile ? 0.0 : 0.05;
-
-    this.targetPos.set(Math.sin(angle) * dist, height, Math.cos(angle) * dist);
-    this.lookAt.set(0, 0.0, 0);
-
-    // On portrait mobile, widen FOV so all 5 hands remain visible.
-    const fov = isMobile && aspect < 1 ? 65 : aspect < 1 ? 60 : 50;
+    const tableSpan = 4.2 + Math.max(0, activePlayerCount - 2) * 0.35;
+    const fov = isMobile && aspect < 1 ? 55 : aspect < 1 ? 52 : 48;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
+
+    const fovRad = (fov * Math.PI) / 180;
+    const vSpanNeeded = aspect < 1 ? tableSpan / Math.max(0.4, aspect) : tableSpan;
+    const height = Math.max(4.6, (vSpanNeeded / 2) / Math.tan(fovRad / 2));
+
+    // Strictly position on the Y-axis (X = 0, Z = 0) looking down at (0, 0, 0)
+    this.targetPos.set(0, height, 0);
+    this.lookAt.set(0, 0, 0);
   }
 
   /**
-   * Per-frame smoothing toward the target pose. Call with delta seconds.
+   * Per-frame smoothing toward the target pose.
+   * Keeps camera directly on the Y-axis looking straight down at (0, 0, 0).
    */
   update(deltaSeconds: number): void {
     const tau = 0.25; // smoothing time constant
     const k = 1 - Math.exp(-deltaSeconds / tau);
     this.currentPos.lerp(this.targetPos, k);
     this.currentLookAt.lerp(this.lookAt, k);
-    this.camera.position.copy(this.currentPos);
+
+    // Keep camera position strictly on the Y-axis
+    this.camera.position.set(0, this.currentPos.y, 0);
+    // Maintain orientation so player paddle appears at the bottom of the screen
+    this.camera.up.set(-1, 0, 0);
     this.camera.lookAt(this.currentLookAt);
   }
 
-  /** Subtle camera bob for cinematic feel — reduced when reduced-motion is on. */
+  /** Subtle camera bob — vertical along Y-axis only, keeping X=0 and Z=0. */
   applyBob(timeSeconds: number, reduced: boolean): void {
     if (reduced) return;
-    const amp = 0.012;
-    this.camera.position.x += Math.sin(timeSeconds * 0.4) * amp;
-    this.camera.position.y += Math.cos(timeSeconds * 0.3) * amp * 0.5;
+    const amp = 0.02;
+    this.camera.position.x = 0;
+    this.camera.position.z = 0;
+    this.camera.position.y += Math.sin(timeSeconds * 0.5) * amp;
   }
 }
