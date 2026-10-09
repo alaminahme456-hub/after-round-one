@@ -1,0 +1,5 @@
+{
+  "name": "AFTER ROUND ONE",
+  "description": "A 3D multiplayer party game of reaction, timing, and number prediction.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
