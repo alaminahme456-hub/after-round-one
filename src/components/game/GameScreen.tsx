@@ -88,13 +88,28 @@ export function GameScreen() {
   useEffect(() => {
     if (snapshot.state === "ROLLING") {
       sceneRef.current?.setRolling(true);
-      sound.rollingLoop();
+      // Start the round audio in lockstep with the timer. The onEnded callback
+      // force-transitions the match into NUMBER_SUBMISSION when the audio
+      // finishes — this stops the timer immediately if the audio ends before
+      // the configured roundDuration elapses. Per-round dedupe is handled
+      // inside soundManager.
+      sound.rollingLoop(snapshot.roundNumber, () => {
+        const m = matchRef.current;
+        if (!m) return;
+        const snap = m.getSnapshot();
+        if (snap.state === "ROLLING") {
+          m.enterSubmissionPhase();
+        }
+      });
     } else if (snapshot.state === "NUMBER_SUBMISSION" || snapshot.state === "CALCULATING_RESULT") {
       sceneRef.current?.setRolling(false);
       sceneRef.current?.clearWinnerHighlight();
+      // timerStop() calls stopRoundCountdownAudio() internally — this handles
+      // the case where the timer expired BEFORE the audio ended: the audio is
+      // paused + reset to 0 so the next round starts fresh.
       sound.timerStop();
     }
-  }, [snapshot.state]);
+  }, [snapshot.state, snapshot.roundNumber]);
 
   // Winner highlight.
   useEffect(() => {
